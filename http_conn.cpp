@@ -448,6 +448,12 @@ http_conn::HTTP_CODE http_conn::do_request()
   // 构造请求文件路径
   m_real_file = doc_root + m_url;
 
+  // 对于根目录"/"，自动定向到index.html
+  if (m_url == "/")
+  {
+    m_real_file = doc_root + "/index.html";
+  }
+
   // 对于POST请求，可以根据URL路径和请求体内容做特殊处理
   if (m_method == POST)
   {
