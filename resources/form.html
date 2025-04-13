@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>测试POST请求</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .form-container {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 20px;
+        margin-top: 20px;
+        background-color: #f9f9f9;
+      }
+      h1,
+      h2 {
+        color: #333;
+      }
+      label {
+        display: block;
+        margin: 15px 0 5px;
+        font-weight: bold;
+      }
+      input[type="text"],
+      input[type="email"],
+      textarea {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+      textarea {
+        height: 100px;
+        resize: vertical;
+      }
+      button {
+        background: #4caf50;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+        margin-top: 10px;
+      }
+      button:hover {
+        background: #45a049;
+      }
+      .info {
+        background-color: #e7f3fe;
+        border-left: 6px solid #2196f3;
+        padding: 10px;
+        margin: 20px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>测试POST请求</h1>
+
+    <div class="info">
+      <p>
+        此页面用于测试服务器的POST请求处理功能。填写并提交表单以发送POST请求。
+      </p>
+    </div>
+
+    <div class="form-container">
+      <h2>提交表单</h2>
+      <form action="/submit" method="POST">
+        <label for="name">姓名：</label>
+        <input type="text" id="name" name="name" required />
+
+        <label for="email">邮箱：</label>
+        <input type="email" id="email" name="email" required />
+
+        <label for="message">留言：</label>
+        <textarea id="message" name="message" required></textarea>
+
+        <button type="submit">提交表单</button>
+      </form>
+    </div>
+
+    <p><a href="/">返回首页</a></p>
+  </body>
+</html>

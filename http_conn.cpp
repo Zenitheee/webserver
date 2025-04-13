@@ -234,35 +234,39 @@ http_conn::HTTP_CODE http_conn::process_read()
     return BAD_REQUEST;
   }
 
-  // 如果请求行解析成功，则继续解析请求头
-  if (ret == GET_REQUEST)
+  // 解析请求头
+  ret = parse_headers(request);
+  if (ret == BAD_REQUEST)
   {
-    // 解析请求头
-    ret = parse_headers(request);
+    return BAD_REQUEST;
+  }
+
+  // 如果是GET请求且没有请求体，直接处理请求
+  if (m_method == GET && m_content_length == 0)
+  {
+    return do_request();
+  }
+
+  // 处理POST请求或包含请求体的GET请求
+  if (m_content_length > 0)
+  {
+    // 检查是否接收到足够的数据
+    size_t header_end = request.find("\r\n\r\n");
+    if (header_end != std::string::npos &&
+        static_cast<size_t>(m_read_idx) < (static_cast<size_t>(m_content_length) + header_end + 4))
+    {
+      return NO_REQUEST; // 请求体数据不完整，继续读取
+    }
+
+    // 解析请求体
+    ret = parse_content(request);
     if (ret == BAD_REQUEST)
     {
       return BAD_REQUEST;
     }
 
-    // 如果请求头解析成功且是GET请求，直接处理请求
-    if (ret == GET_REQUEST)
-    {
-      return do_request();
-    }
-
-    // 如果有请求体，则需要确认请求体是否完整
-    if (m_content_length > 0)
-    {
-      // 检查是否接收到足够的数据
-      size_t header_end = request.find("\r\n\r\n");
-      if (header_end != std::string::npos &&
-          static_cast<size_t>(m_read_idx) < (static_cast<size_t>(m_content_length) + header_end + 4))
-      {
-        return NO_REQUEST;
-      }
-      // 请求体完整，处理请求
-      return do_request();
-    }
+    // 请求体完整，处理请求
+    return do_request();
   }
 
   return NO_REQUEST;
@@ -280,11 +284,15 @@ http_conn::HTTP_CODE http_conn::parse_request_line(const std::string &request)
     return BAD_REQUEST;
   }
 
-  // 解析方法（当前只支持GET）
+  // 解析方法（支持GET和POST）
   std::string method = matches[1];
   if (method == "GET")
   {
     m_method = GET;
+  }
+  else if (method == "POST")
+  {
+    m_method = POST;
   }
   else
   {
@@ -326,7 +334,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line(const std::string &request)
   // 直接赋值给std::string成员变量
   m_version = version;
 
-  return GET_REQUEST;
+  return m_method == GET ? GET_REQUEST : NO_REQUEST;
 }
 
 // 解析HTTP请求的头部信息
@@ -396,7 +404,7 @@ http_conn::HTTP_CODE http_conn::parse_content(const std::string &request)
 {
   // 找到消息体开始的位置
   size_t content_start = request.find("\r\n\r\n") + 4;
-  if (content_start == 4 || content_start <= 4) // 如果没找到\r\n\r\n或位置不正确
+  if (content_start == std::string::npos + 4 || content_start <= 4) // 如果没找到\r\n\r\n或位置不正确
   {
     return BAD_REQUEST;
   }
@@ -404,6 +412,14 @@ http_conn::HTTP_CODE http_conn::parse_content(const std::string &request)
   // 检查消息体是否完整接收
   if (request.length() - content_start >= (size_t)m_content_length)
   {
+    // 在实际应用中，这里可以根据Content-Type处理请求体
+    // 例如: application/x-www-form-urlencoded, multipart/form-data, application/json等
+    // 这里仅作为示例，简单处理
+
+    std::string body = request.substr(content_start, m_content_length);
+    printf("接收到POST请求体: %s\n", body.c_str());
+
+    // 成功解析POST请求，返回GET_REQUEST表示一个完整的请求
     return GET_REQUEST;
   }
 
@@ -431,6 +447,24 @@ http_conn::HTTP_CODE http_conn::do_request()
 {
   // 构造请求文件路径
   m_real_file = doc_root + m_url;
+
+  // 对于POST请求，可以根据URL路径和请求体内容做特殊处理
+  if (m_method == POST)
+  {
+    printf("处理POST请求: %s\n", m_url.c_str());
+
+    // 这里可以根据具体的业务需求处理POST请求
+    // 例如，可以根据URL路径来确定要执行的操作
+
+    // 作为演示，返回固定的POST响应页面
+    m_real_file = doc_root + "/post_response.html";
+
+    // 如果特定响应页面不存在，使用默认页面
+    if (stat(m_real_file.c_str(), &m_file_stat) < 0)
+    {
+      m_real_file = doc_root + "/index.html";
+    }
+  }
 
   // 获取文件状态信息
   if (stat(m_real_file.c_str(), &m_file_stat) < 0)
