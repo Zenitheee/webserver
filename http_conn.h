@@ -17,12 +17,15 @@
 #include <errno.h>
 #include <sys/uio.h>
 #include <string.h>
+#include <string>
+#include <memory>
 #include "locker.h"
 
 class http_conn
 {
 public:
-  static const int FILENAME_LEN = 200; // 文件名的最大长度
+  // 使用std::string后不再需要固定长度的文件名
+  // static const int FILENAME_LEN = 200; // 文件名的最大长度
 
   static const int READ_BUFFER_SIZE = 2048;  // 读缓冲区的大小
   static const int WRITE_BUFFER_SIZE = 1024; // 写缓冲区的大小
@@ -89,7 +92,10 @@ public:
   };
 
   http_conn() {}
-  ~http_conn() {}
+  ~http_conn()
+  {
+    close_conn();
+  }
 
   void init(int sockfd, const sockaddr_in &addr); // 初始化新接收的连接
   void close_conn();                              // 关闭连接
@@ -108,30 +114,32 @@ private:
   CHECK_STATE m_check_state; // 主状态机当前所处的状态
   METHOD m_method;           // 请求方法
 
-  char m_real_file[FILENAME_LEN]; // 客户请求的目标文件的完整路径，其内容等于 doc_root + m_url, doc_root是网站根目录
-  char *m_url;                    // 请求目标文件的文件名
-  char *m_version;                // 协议版本，只支持http1.1
-  char *m_host;                   // 主机名
-  int m_content_length;           // HTTP请求的消息总长度
-  bool m_linger;                  // 判断HTTP请求是否要保持连接
+  std::string m_real_file; // 客户请求的目标文件的完整路径，其内容等于 doc_root + m_url, doc_root是网站根目录
+  std::string m_url;       // 请求目标文件的文件名
+  std::string m_version;   // 协议版本，只支持http1.1
+  std::string m_host;      // 主机名
+  int m_content_length;    // HTTP请求的消息总长度
+  bool m_linger;           // 判断HTTP请求是否要保持连接
 
   char m_write_buf[WRITE_BUFFER_SIZE]; // 写缓冲区
   int m_write_idx;                     // 写缓冲区中待发送的字节数
-  char *m_file_address;                // 客户请求的目标文件被mmap到内存中的起始位置
-  struct stat m_file_stat;             // 目标文件的状态。通过它我们可以判断文件是否存在、是否为目录、是否可读，并获取文件大小等信息
-  struct iovec m_iv[2];                // 我们将采用writev来执行写操作，所以定义下面两个成员，其中m_iv_count表示被写内存块的数量。
+
+  // 使用智能指针替代裸指针，通过自定义删除器确保正确调用munmap
+  std::shared_ptr<char> m_file_address;
+  struct stat m_file_stat; // 目标文件的状态。通过它我们可以判断文件是否存在、是否为目录、是否可读，并获取文件大小等信息
+  struct iovec m_iv[2];    // 我们将采用writev来执行写操作，所以定义下面两个成员，其中m_iv_count表示被写内存块的数量。
   int m_iv_count;
 
   int bytes_to_send;   // 将要发送的数据的字节数
   int bytes_have_send; // 已经发送的字节数
 
-  void init();                              // 初始化连接其余的信息
-  HTTP_CODE process_read();                 // 解析HTTP请求
-  bool process_write(HTTP_CODE ret);        // 填充HTTP应答
-                                            // 下面这一组函数被process_read调用以分析HTTP请求
-  HTTP_CODE parse_request_line(char *text); // 解析请求首行
-  HTTP_CODE parse_headers(char *text);      // 解析请求头
-  HTTP_CODE parse_content(char *text);      // 解析请求体
+  void init();                                              // 初始化连接其余的信息
+  HTTP_CODE process_read();                                 // 解析HTTP请求
+  bool process_write(HTTP_CODE ret);                        // 填充HTTP应答
+                                                            // 下面这一组函数被process_read调用以分析HTTP请求
+  HTTP_CODE parse_request_line(const std::string &request); // 解析请求首行
+  HTTP_CODE parse_headers(const std::string &request);      // 解析请求头
+  HTTP_CODE parse_content(const std::string &request);      // 解析请求体
   LINE_STATUS parse_line();
   char *get_line() { return m_read_buf + m_start_line; }
   HTTP_CODE do_request();

@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <list>
+#include <queue>
 #include <exception>
 #include <cstdio>
 #include "locker.h"
@@ -32,8 +33,8 @@ private:
   // 请求队列最多允许的等待处理请求数
   int m_max_requests;
 
-  // 请求队列
-  std::list<T *> m_workqueue;
+  // 请求队列 - 改用std::queue替代std::list提高效率
+  std::queue<T *> m_workqueue;
 
   // 互斥锁
   locker m_queuelocker;
@@ -90,7 +91,6 @@ threadpool<T>::~threadpool()
 template <typename T>
 bool threadpool<T>::append(T *request)
 {
-
   m_queuelocker.lock();
   if (m_workqueue.size() > m_max_requests)
   {
@@ -98,7 +98,7 @@ bool threadpool<T>::append(T *request)
     return false;
   }
 
-  m_workqueue.push_back(request);
+  m_workqueue.push(request); // 使用queue的push方法而不是list的push_back
   m_queuelocker.unlock();
   m_queuestat.post();
   return true;
@@ -126,7 +126,7 @@ void threadpool<T>::run()
       continue;
     }
     T *request = m_workqueue.front();
-    m_workqueue.pop_front();
+    m_workqueue.pop(); // 使用queue的pop方法而不是list的pop_front
     m_queuelocker.unlock();
 
     if (!request)
