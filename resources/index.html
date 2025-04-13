@@ -1,15 +1,60 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>首页</title>
-</head>
-<body>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>简易网盘</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .file-list {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        margin-top: 20px;
+      }
+      .upload-form {
+        margin: 20px 0;
+        padding: 15px;
+        background: #f5f5f5;
+        border-radius: 5px;
+      }
+      h1,
+      h2 {
+        color: #333;
+      }
+      button {
+        background: #4caf50;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #45a049;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>简易网盘系统</h1>
 
-    <h1>欢迎来到首页~~~</h1> </br>
-    <img src="images/image1.jpg"  alt="ces" />
-    
-</body>
+    <div class="upload-form">
+      <h2>上传文件</h2>
+      <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" required />
+        <button type="submit">上传</button>
+      </form>
+    </div>
+
+    <div class="file-list">
+      <h2>文件列表</h2>
+      <p>目前没有文件，请上传文件。</p>
+    </div>
+  </body>
 </html>

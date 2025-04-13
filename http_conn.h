@@ -122,6 +122,9 @@ private:
   struct iovec m_iv[2];                // 我们将采用writev来执行写操作，所以定义下面两个成员，其中m_iv_count表示被写内存块的数量。
   int m_iv_count;
 
+  int bytes_to_send;   // 将要发送的数据的字节数
+  int bytes_have_send; // 已经发送的字节数
+
   void init();                              // 初始化连接其余的信息
   HTTP_CODE process_read();                 // 解析HTTP请求
   bool process_write(HTTP_CODE ret);        // 填充HTTP应答
