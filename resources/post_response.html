@@ -4,62 +4,183 @@
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>POST请求响应</title>
+    <title>文件上传成功 - 云存储空间</title>
     <style>
       body {
-        font-family: Arial, sans-serif;
-        max-width: 800px;
+        font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        max-width: 1000px;
         margin: 0 auto;
         padding: 20px;
-      }
-      .response-box {
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        padding: 20px;
-        margin-top: 20px;
-        background-color: #f9f9f9;
-      }
-      h1,
-      h2 {
+        background-color: #f7f9fc;
         color: #333;
       }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 20px;
+        border-bottom: 1px solid #e0e0e0;
+        margin-bottom: 30px;
+      }
+      .logo {
+        font-size: 28px;
+        font-weight: bold;
+        color: #2c3e50;
+      }
+      .logo span {
+        color: #3498db;
+      }
+      .main-container {
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        padding: 30px;
+        margin-top: 20px;
+      }
+      h1,
+      h2,
+      h3 {
+        color: #2c3e50;
+      }
+      .response-box {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 25px;
+        margin-top: 25px;
+        background-color: #fff;
+        transition: all 0.3s ease;
+      }
       .success {
-        color: #4caf50;
+        color: #2ecc71;
         font-weight: bold;
       }
-      .back-link {
+      .btn {
+        background: #3498db;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background 0.3s;
+        text-decoration: none;
         display: inline-block;
         margin-top: 20px;
-        color: #2196f3;
-        text-decoration: none;
       }
-      .back-link:hover {
-        text-decoration: underline;
+      .btn:hover {
+        background: #2980b9;
       }
       .upload-success {
-        background-color: #e8f5e9;
-        border-left: 6px solid #4caf50;
-        padding: 10px 15px;
+        background-color: #eafaf1;
+        border-radius: 8px;
+        padding: 20px;
+        margin-top: 20px;
+        border-left: 5px solid #2ecc71;
+      }
+      .success-icon {
+        font-size: 64px;
+        color: #2ecc71;
+        text-align: center;
+        margin: 20px 0;
+      }
+      .file-details {
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        padding: 15px;
         margin-top: 15px;
+      }
+      .file-detail-row {
+        display: flex;
+        padding: 8px 0;
+        border-bottom: 1px solid #eee;
+      }
+      .file-detail-row:last-child {
+        border-bottom: none;
+      }
+      .file-detail-label {
+        font-weight: bold;
+        width: 120px;
+        color: #7f8c8d;
+      }
+      .nav-links {
+        margin-top: 30px;
+        text-align: center;
+      }
+      .nav-links a {
+        color: #3498db;
+        text-decoration: none;
+        margin: 0 15px;
+        font-weight: 500;
+      }
+      .nav-links a:hover {
+        text-decoration: underline;
+      }
+      .actions {
+        display: flex;
+        gap: 15px;
+        margin-top: 25px;
       }
     </style>
   </head>
   <body>
-    <h1>请求处理成功</h1>
-
-    <div class="response-box">
-      <h2>服务器响应</h2>
-      <p><span class="success">✓</span> 您的请求已成功处理！</p>
-
-      <div class="upload-success">
-        <h3>文件上传成功</h3>
-        <p>您的文件已成功上传至服务器。</p>
-        <p>文件已保存到服务器的 /resources/uploads 目录中。</p>
-      </div>
-
-      <p>在实际应用中，此处可以显示更多关于请求处理结果的信息。</p>
+    <div class="header">
+      <div class="logo">云<span>存储</span></div>
+      <a href="/" class="btn">返回首页</a>
     </div>
 
-    <a href="/" class="back-link">← 返回首页</a>
+    <div class="main-container">
+      <h1>文件上传成功</h1>
+
+      <div class="success-icon">📤</div>
+
+      <div class="response-box">
+        <h2>上传结果</h2>
+        <p><span class="success">✓</span> 您的文件已成功上传至云存储空间！</p>
+
+        <div class="upload-success">
+          <h3>文件信息</h3>
+          <p>您的文件已成功保存在服务器上，现在可以随时访问。</p>
+
+          <div class="file-details">
+            <div class="file-detail-row">
+              <div class="file-detail-label">存储位置：</div>
+              <div>/resources/uploads</div>
+            </div>
+            <div class="file-detail-row">
+              <div class="file-detail-label">上传时间：</div>
+              <div id="uploadTime">刚刚</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <a href="/" class="btn">查看所有文件</a>
+          <a href="/form.html" class="btn">查看功能介绍</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav-links">
+      <a href="/">首页</a> | <a href="/form.html">功能介绍</a> |
+      <a href="#">帮助中心</a> | <a href="#">关于我们</a>
+    </div>
+
+    <script>
+      // 添加当前日期和时间
+      document.addEventListener("DOMContentLoaded", function () {
+        const now = new Date();
+        const formattedDate =
+          now.getFullYear() +
+          "-" +
+          (now.getMonth() + 1).toString().padStart(2, "0") +
+          "-" +
+          now.getDate().toString().padStart(2, "0") +
+          " " +
+          now.getHours().toString().padStart(2, "0") +
+          ":" +
+          now.getMinutes().toString().padStart(2, "0");
+        document.getElementById("uploadTime").textContent = formattedDate;
+      });
+    </script>
   </body>
 </html>
