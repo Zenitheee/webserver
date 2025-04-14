@@ -450,6 +450,13 @@ http_conn::HTTP_CODE http_conn::parse_content(const std::string &request)
     {
       return handle_file_upload(body);
     }
+    // 处理文件删除请求
+    else if (m_url == "/delete")
+    {
+      printf("接收到删除文件请求: %s\n", body.c_str());
+      // 设置checked_idx位置，让do_request能正确解析请求体
+      m_checked_idx = content_start;
+    }
     else
     {
       printf("接收到POST请求体: %s\n", body.c_str());
@@ -710,10 +717,18 @@ std::string generate_file_list_html()
       size_str = std::to_string(file_stat.st_size / (1024 * 1024)) + " MB";
     }
 
-    // 添加文件链接和大小
+    // 添加文件链接、大小和删除按钮
     file_list_html += "  <li>\n";
-    file_list_html += "    <a href=\"/uploads/" + file + "\">" + file + "</a>\n";
-    file_list_html += "    <span class=\"file-size\">" + size_str + "</span>\n";
+    file_list_html += "    <div>\n";
+    file_list_html += "      <a href=\"/uploads/" + file + "\">" + file + "</a>\n";
+    file_list_html += "      <span class=\"file-size\">" + size_str + "</span>\n";
+    file_list_html += "    </div>\n";
+    file_list_html += "    <div class=\"file-actions\">\n";
+    file_list_html += "      <form action=\"/delete\" method=\"POST\">\n";
+    file_list_html += "        <input type=\"hidden\" name=\"filename\" value=\"" + file + "\">\n";
+    file_list_html += "        <button type=\"submit\" class=\"delete-btn\">删除</button>\n";
+    file_list_html += "      </form>\n";
+    file_list_html += "    </div>\n";
     file_list_html += "  </li>\n";
   }
   file_list_html += "</ul>\n";
@@ -753,6 +768,73 @@ http_conn::HTTP_CODE http_conn::do_request()
       // 上传处理已经在parse_content阶段的handle_file_upload中完成
       // 这里设置响应页面
       m_real_file = doc_root + "/post_response.html";
+    }
+    // 处理文件删除请求
+    else if (m_url == "/delete")
+    {
+      printf("处理文件删除请求\n");
+
+      // 从请求体中提取文件名
+      std::string request_body(m_read_buf + m_checked_idx, m_content_length);
+
+      // 解析表单数据 - application/x-www-form-urlencoded 格式
+      std::string filename;
+      size_t pos = request_body.find("filename=");
+      if (pos != std::string::npos)
+      {
+        pos += 9; // 跳过"filename="
+        size_t end_pos = request_body.find("&", pos);
+        if (end_pos == std::string::npos)
+        {
+          end_pos = request_body.length();
+        }
+        filename = request_body.substr(pos, end_pos - pos);
+
+        // 处理URL编码
+        for (size_t i = 0; i < filename.length(); ++i)
+        {
+          if (filename[i] == '+')
+          {
+            filename[i] = ' ';
+          }
+          else if (filename[i] == '%' && i + 2 < filename.length())
+          {
+            int hex_val = 0;
+            sscanf(filename.substr(i + 1, 2).c_str(), "%x", &hex_val);
+            filename.replace(i, 3, 1, static_cast<char>(hex_val));
+          }
+        }
+      }
+
+      printf("尝试删除文件: %s\n", filename.c_str());
+
+      // 如果有文件名，尝试删除文件
+      if (!filename.empty())
+      {
+        std::string file_path = std::string(UPLOAD_DIR) + "/" + filename;
+
+        // 检查文件是否存在并且是常规文件
+        struct stat file_stat;
+        if (stat(file_path.c_str(), &file_stat) == 0 && S_ISREG(file_stat.st_mode))
+        {
+          // 尝试删除文件
+          if (unlink(file_path.c_str()) == 0)
+          {
+            printf("文件 %s 成功删除\n", filename.c_str());
+          }
+          else
+          {
+            printf("文件 %s 删除失败: %s\n", filename.c_str(), strerror(errno));
+          }
+        }
+        else
+        {
+          printf("文件 %s 不存在或不是普通文件\n", filename.c_str());
+        }
+      }
+
+      // 设置删除响应页面
+      m_real_file = doc_root + "/delete_response.html";
     }
     else
     {

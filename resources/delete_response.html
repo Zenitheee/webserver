@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>文件删除响应</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .response-box {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 20px;
+        margin-top: 20px;
+        background-color: #f9f9f9;
+      }
+      h1,
+      h2 {
+        color: #333;
+      }
+      .success {
+        color: #4caf50;
+        font-weight: bold;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 20px;
+        color: #2196f3;
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      .delete-success {
+        background-color: #e8f5e9;
+        border-left: 6px solid #4caf50;
+        padding: 10px 15px;
+        margin-top: 15px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>文件删除成功</h1>
+
+    <div class="response-box">
+      <h2>服务器响应</h2>
+      <p><span class="success">✓</span> 文件已成功删除！</p>
+
+      <div class="delete-success">
+        <h3>操作完成</h3>
+        <p>您请求删除的文件已从服务器移除。</p>
+      </div>
+    </div>
+
+    <a href="/" class="back-link">← 返回首页</a>
+  </body>
+</html>
