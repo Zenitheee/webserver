@@ -88,6 +88,19 @@
       </form>
     </div>
 
+    <div class="form-container">
+      <h2>文件上传</h2>
+      <form action="/upload" method="POST" enctype="multipart/form-data">
+        <label for="uploadFile">选择文件：</label>
+        <input type="file" id="uploadFile" name="uploadFile" required />
+
+        <label for="description">文件描述：</label>
+        <textarea id="description" name="description"></textarea>
+
+        <button type="submit">上传文件</button>
+      </form>
+    </div>
+
     <p><a href="/">返回首页</a></p>
   </body>
 </html>

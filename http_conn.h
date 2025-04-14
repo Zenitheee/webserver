@@ -19,6 +19,8 @@
 #include <string.h>
 #include <string>
 #include <memory>
+#include <map>
+#include <vector>
 #include "locker.h"
 
 class http_conn
@@ -29,6 +31,10 @@ public:
 
   static const int READ_BUFFER_SIZE = 2048;  // 读缓冲区的大小
   static const int WRITE_BUFFER_SIZE = 1024; // 写缓冲区的大小
+
+  // 上传文件相关常量
+  static const char *UPLOAD_DIR;                     // 上传文件的目录路径
+  static const int MAX_FILE_SIZE = 10 * 1024 * 1024; // 最大文件大小限制(10MB)
 
   static int m_epollfd;    // 所有socket上的事件都被注册到同一个epoll内核事件中，所以设置成静态的
   static int m_user_count; // 统计用户的数量
@@ -121,6 +127,12 @@ private:
   int m_content_length;    // HTTP请求的消息总长度
   bool m_linger;           // 判断HTTP请求是否要保持连接
 
+  // 文件上传相关成员
+  std::string m_content_type;     // Content-Type头部的值
+  std::string m_boundary;         // 多部分表单数据的分界线
+  std::string m_upload_file_name; // 上传的文件名
+  bool m_is_upload_request;       // 是否是上传文件的请求
+
   char m_write_buf[WRITE_BUFFER_SIZE]; // 写缓冲区
   int m_write_idx;                     // 写缓冲区中待发送的字节数
 
@@ -143,6 +155,13 @@ private:
   LINE_STATUS parse_line();
   char *get_line() { return m_read_buf + m_start_line; }
   HTTP_CODE do_request();
+
+  // 文件上传相关函数
+  HTTP_CODE handle_file_upload(const std::string &request_body);
+  bool save_uploaded_file(const std::string &file_content, const std::string &file_name);
+  std::string extract_filename_from_content_disposition(const std::string &header);
+  std::map<std::string, std::string> parse_multipart_form_data(const std::string &request_body);
+
   // 这一组函数被process_write调用以填充HTTP应答。
   void unmap();
   void add_headers(int content_length);

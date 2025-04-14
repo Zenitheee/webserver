@@ -36,15 +36,27 @@
       .back-link:hover {
         text-decoration: underline;
       }
+      .upload-success {
+        background-color: #e8f5e9;
+        border-left: 6px solid #4caf50;
+        padding: 10px 15px;
+        margin-top: 15px;
+      }
     </style>
   </head>
   <body>
-    <h1>POST请求处理成功</h1>
+    <h1>请求处理成功</h1>
 
     <div class="response-box">
       <h2>服务器响应</h2>
-      <p><span class="success">✓</span> 您的POST请求已成功处理！</p>
-      <p>POST请求已被服务器接收并处理。这个页面是POST请求的标准响应。</p>
+      <p><span class="success">✓</span> 您的请求已成功处理！</p>
+
+      <div class="upload-success">
+        <h3>文件上传成功</h3>
+        <p>您的文件已成功上传至服务器。</p>
+        <p>文件已保存到服务器的 /resources/uploads 目录中。</p>
+      </div>
+
       <p>在实际应用中，此处可以显示更多关于请求处理结果的信息。</p>
     </div>
 

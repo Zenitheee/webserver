@@ -1,5 +1,7 @@
 #include "http_conn.h"
 #include <regex>
+#include <dirent.h>
+#include <algorithm>
 
 // 定义HTTP响应的一些状态信息
 const char *ok_200_title = "OK";
@@ -19,6 +21,9 @@ int http_conn::m_user_count = 0;
 
 // 网站根目录
 const std::string doc_root = "/home/zen/webserver/resources";
+
+// 上传文件目录
+const char *http_conn::UPLOAD_DIR = "/home/zen/webserver/resources/uploads";
 
 // 设置文件描述符非阻塞
 void setnonblocking(int fd)
@@ -97,6 +102,13 @@ void http_conn::init()
   m_version.clear();
   m_content_length = 0;
   m_host.clear();
+
+  // 初始化文件上传相关成员
+  m_content_type.clear();
+  m_boundary.clear();
+  m_upload_file_name.clear();
+  m_is_upload_request = false;
+
   bzero(m_read_buf, READ_BUFFER_SIZE);
   bzero(m_write_buf, READ_BUFFER_SIZE);
   m_real_file.clear();
@@ -386,6 +398,24 @@ http_conn::HTTP_CODE http_conn::parse_headers(const std::string &request)
       // 直接赋值给std::string成员变量
       m_host = header_value;
     }
+    // 处理Content-Type头部，用于文件上传
+    else if (header_name == "Content-Type")
+    {
+      m_content_type = header_value;
+
+      // 检查是否是multipart/form-data表单提交
+      if (m_content_type.find("multipart/form-data") != std::string::npos)
+      {
+        m_is_upload_request = true;
+
+        // 提取boundary值
+        size_t boundary_pos = m_content_type.find("boundary=");
+        if (boundary_pos != std::string::npos)
+        {
+          m_boundary = m_content_type.substr(boundary_pos + 9);
+        }
+      }
+    }
 
     ++it;
   }
@@ -412,18 +442,190 @@ http_conn::HTTP_CODE http_conn::parse_content(const std::string &request)
   // 检查消息体是否完整接收
   if (request.length() - content_start >= (size_t)m_content_length)
   {
-    // 在实际应用中，这里可以根据Content-Type处理请求体
-    // 例如: application/x-www-form-urlencoded, multipart/form-data, application/json等
-    // 这里仅作为示例，简单处理
-
+    // 提取请求体内容
     std::string body = request.substr(content_start, m_content_length);
-    printf("接收到POST请求体: %s\n", body.c_str());
+
+    // 处理文件上传请求
+    if (m_is_upload_request && !m_boundary.empty())
+    {
+      return handle_file_upload(body);
+    }
+    else
+    {
+      printf("接收到POST请求体: %s\n", body.c_str());
+    }
 
     // 成功解析POST请求，返回GET_REQUEST表示一个完整的请求
     return GET_REQUEST;
   }
 
   return NO_REQUEST;
+}
+
+// 处理文件上传请求
+http_conn::HTTP_CODE http_conn::handle_file_upload(const std::string &request_body)
+{
+  // 检查文件上传目录是否存在
+  struct stat dir_stat;
+  if (stat(UPLOAD_DIR, &dir_stat) < 0 || !S_ISDIR(dir_stat.st_mode))
+  {
+    // 目录不存在，尝试创建
+    if (mkdir(UPLOAD_DIR, 0755) < 0)
+    {
+      printf("创建上传目录失败: %s\n", strerror(errno));
+      return INTERNAL_ERROR;
+    }
+  }
+
+  // 解析多部分表单数据
+  std::map<std::string, std::string> form_data = parse_multipart_form_data(request_body);
+
+  // 检查是否找到上传的文件
+  if (form_data.find("file_content") != form_data.end() && !m_upload_file_name.empty())
+  {
+    // 保存上传的文件
+    bool save_result = save_uploaded_file(form_data["file_content"], m_upload_file_name);
+    if (!save_result)
+    {
+      printf("保存上传文件失败\n");
+      return INTERNAL_ERROR;
+    }
+
+    printf("文件上传成功: %s\n", m_upload_file_name.c_str());
+
+    // 设置响应页面为上传成功页面
+    m_real_file = doc_root + "/post_response.html";
+    return FILE_REQUEST;
+  }
+
+  return BAD_REQUEST;
+}
+
+// 解析多部分表单数据
+std::map<std::string, std::string> http_conn::parse_multipart_form_data(const std::string &request_body)
+{
+  std::map<std::string, std::string> form_data;
+
+  // 构造分界线字符串
+  std::string boundary = "--" + m_boundary;
+
+  // 查找第一个分界线
+  size_t pos = request_body.find(boundary);
+  if (pos == std::string::npos)
+  {
+    return form_data;
+  }
+
+  // 循环解析每个部分
+  while (pos != std::string::npos)
+  {
+    // 找到该部分的起始位置
+    size_t part_start = pos + boundary.length();
+
+    // 查找下一个分界线
+    size_t next_boundary = request_body.find(boundary, part_start);
+    if (next_boundary == std::string::npos)
+    {
+      break;
+    }
+
+    // 提取该部分的内容
+    std::string part = request_body.substr(part_start, next_boundary - part_start);
+
+    // 提取头部和内容
+    size_t headers_end = part.find("\r\n\r\n");
+    if (headers_end != std::string::npos)
+    {
+      std::string headers = part.substr(0, headers_end);
+      std::string content = part.substr(headers_end + 4);
+
+      // 检查是否包含Content-Disposition头
+      if (headers.find("Content-Disposition:") != std::string::npos)
+      {
+        // 检查是否是文件字段
+        if (headers.find("filename=") != std::string::npos)
+        {
+          // 提取文件名
+          m_upload_file_name = extract_filename_from_content_disposition(headers);
+
+          // 如果文件内容是二进制，移除结尾的\r\n
+          if (!content.empty() && content.substr(content.length() - 2) == "\r\n")
+          {
+            content = content.substr(0, content.length() - 2);
+          }
+
+          // 保存文件内容
+          form_data["file_content"] = content;
+        }
+        else
+        {
+          // 普通表单字段，提取字段名和值
+          std::regex field_regex("name=\"([^\"]+)\"");
+          std::smatch matches;
+          if (std::regex_search(headers, matches, field_regex))
+          {
+            std::string field_name = matches[1];
+
+            // 移除结尾的\r\n
+            if (!content.empty() && content.substr(content.length() - 2) == "\r\n")
+            {
+              content = content.substr(0, content.length() - 2);
+            }
+
+            form_data[field_name] = content;
+          }
+        }
+      }
+    }
+
+    // 移动到下一个部分
+    pos = next_boundary;
+  }
+
+  return form_data;
+}
+
+// 从Content-Disposition头中提取文件名
+std::string http_conn::extract_filename_from_content_disposition(const std::string &header)
+{
+  std::regex filename_regex("filename=\"([^\"]+)\"");
+  std::smatch matches;
+
+  if (std::regex_search(header, matches, filename_regex))
+  {
+    return matches[1];
+  }
+
+  // 如果没找到文件名，返回一个默认名称
+  return "unknown_file";
+}
+
+// 保存上传的文件
+bool http_conn::save_uploaded_file(const std::string &file_content, const std::string &file_name)
+{
+  // 构造完整的文件路径
+  std::string file_path = std::string(UPLOAD_DIR) + "/" + file_name;
+
+  // 打开文件准备写入
+  FILE *fp = fopen(file_path.c_str(), "wb");
+  if (!fp)
+  {
+    printf("无法创建文件: %s\n", file_path.c_str());
+    return false;
+  }
+
+  // 写入文件内容
+  size_t written = fwrite(file_content.c_str(), 1, file_content.length(), fp);
+  fclose(fp);
+
+  // 检查是否写入成功
+  if (written != file_content.length())
+  {
+    printf("写入文件失败: %s\n", file_path.c_str());
+    return false;
+  }
+
+  return true;
 }
 
 // 由于我们现在使用正则表达式直接处理完整的HTTP请求，不再需要按行解析
@@ -440,6 +642,85 @@ void http_conn::unmap()
   m_file_address.reset();
 }
 
+// 生成文件列表HTML
+std::string generate_file_list_html()
+{
+  std::string file_list_html = "";
+
+  // 打开uploads目录
+  DIR *dir = opendir(http_conn::UPLOAD_DIR);
+  if (dir == NULL)
+  {
+    return "<p>无法访问上传目录。</p>";
+  }
+
+  // 存储文件列表
+  std::vector<std::string> files;
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL)
+  {
+    // 跳过.和..目录
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+    {
+      continue;
+    }
+
+    // 构建完整路径
+    std::string full_path = std::string(http_conn::UPLOAD_DIR) + "/" + entry->d_name;
+
+    // 检查是否是普通文件
+    struct stat file_stat;
+    if (stat(full_path.c_str(), &file_stat) == 0 && S_ISREG(file_stat.st_mode))
+    {
+      files.push_back(entry->d_name);
+    }
+  }
+  closedir(dir);
+
+  // 如果没有文件，显示相应信息
+  if (files.empty())
+  {
+    return "<p>目前没有文件，请到表单页面上传文件。</p>";
+  }
+
+  // 按字母顺序排序文件
+  std::sort(files.begin(), files.end());
+
+  // 构建文件列表HTML
+  file_list_html = "<ul class=\"files\">\n";
+  for (const auto &file : files)
+  {
+    // 文件大小信息
+    std::string full_path = std::string(http_conn::UPLOAD_DIR) + "/" + file;
+    struct stat file_stat;
+    stat(full_path.c_str(), &file_stat);
+
+    // 计算可读的文件大小
+    std::string size_str;
+    if (file_stat.st_size < 1024)
+    {
+      size_str = std::to_string(file_stat.st_size) + " B";
+    }
+    else if (file_stat.st_size < 1024 * 1024)
+    {
+      size_str = std::to_string(file_stat.st_size / 1024) + " KB";
+    }
+    else
+    {
+      size_str = std::to_string(file_stat.st_size / (1024 * 1024)) + " MB";
+    }
+
+    // 添加文件链接和大小
+    file_list_html += "  <li>\n";
+    file_list_html += "    <a href=\"/uploads/" + file + "\">" + file + "</a>\n";
+    file_list_html += "    <span class=\"file-size\">" + size_str + "</span>\n";
+    file_list_html += "  </li>\n";
+  }
+  file_list_html += "</ul>\n";
+
+  return file_list_html;
+}
+
 // 当得到一个完整、正确的HTTP请求时，我们就分析目标文件的属性，
 // 如果目标文件存在、对所有用户可读，且不是目录，则使用mmap将其
 // 映射到内存地址m_file_address处，并告诉调用者获取文件成功
@@ -454,16 +735,30 @@ http_conn::HTTP_CODE http_conn::do_request()
     m_real_file = doc_root + "/index.html";
   }
 
+  // 处理上传文件夹的请求
+  if (m_url.compare(0, 9, "/uploads/") == 0)
+  {
+    std::string filename = m_url.substr(8); // 去掉/uploads前缀，保留/
+    m_real_file = std::string(UPLOAD_DIR) + filename;
+  }
+
   // 对于POST请求，可以根据URL路径和请求体内容做特殊处理
   if (m_method == POST)
   {
     printf("处理POST请求: %s\n", m_url.c_str());
 
-    // 这里可以根据具体的业务需求处理POST请求
-    // 例如，可以根据URL路径来确定要执行的操作
-
-    // 作为演示，返回固定的POST响应页面
-    m_real_file = doc_root + "/post_response.html";
+    // 处理上传请求
+    if (m_url == "/upload" && m_is_upload_request)
+    {
+      // 上传处理已经在parse_content阶段的handle_file_upload中完成
+      // 这里设置响应页面
+      m_real_file = doc_root + "/post_response.html";
+    }
+    else
+    {
+      // 其他POST请求，返回固定的POST响应页面
+      m_real_file = doc_root + "/post_response.html";
+    }
 
     // 如果特定响应页面不存在，使用默认页面
     if (stat(m_real_file.c_str(), &m_file_stat) < 0)
@@ -488,6 +783,67 @@ http_conn::HTTP_CODE http_conn::do_request()
   if (S_ISDIR(m_file_stat.st_mode))
   {
     return BAD_REQUEST;
+  }
+
+  // 特殊处理index.html，动态插入文件列表
+  if (m_real_file == doc_root + "/index.html")
+  {
+    // 读取原始index.html内容
+    int fd = open(m_real_file.c_str(), O_RDONLY);
+    if (fd < 0)
+    {
+      return NO_RESOURCE;
+    }
+
+    // 分配内存保存文件内容
+    char *file_content = new char[m_file_stat.st_size + 1];
+    int bytes_read = ::read(fd, file_content, m_file_stat.st_size);
+    close(fd);
+
+    if (bytes_read < 0)
+    {
+      delete[] file_content;
+      return NO_RESOURCE;
+    }
+
+    file_content[bytes_read] = '\0';
+    std::string html_content(file_content);
+    delete[] file_content;
+
+    // 查找文件列表占位符
+    size_t file_list_pos = html_content.find("<div class=\"file-list\">");
+    if (file_list_pos != std::string::npos)
+    {
+      // 找到文件列表的标题后面的位置
+      size_t content_pos = html_content.find("<p>", file_list_pos);
+      if (content_pos != std::string::npos)
+      {
+        // 找到段落结束的位置
+        size_t end_pos = html_content.find("</p>", content_pos);
+        if (end_pos != std::string::npos)
+        {
+          // 替换占位符内容为实际文件列表
+          std::string file_list = generate_file_list_html();
+          html_content.replace(content_pos, end_pos + 4 - content_pos, file_list);
+
+          // 创建临时文件存储修改后的内容
+          char temp_path[128];
+          sprintf(temp_path, "/tmp/index_%d.html", m_sockfd);
+          int temp_fd = open(temp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          if (temp_fd > 0)
+          {
+            ::write(temp_fd, html_content.c_str(), html_content.length());
+            close(temp_fd);
+
+            // 替换m_real_file为临时文件
+            m_real_file = temp_path;
+
+            // 更新文件状态
+            stat(m_real_file.c_str(), &m_file_stat);
+          }
+        }
+      }
+    }
   }
 
   // 以只读方式打开文件
@@ -573,7 +929,105 @@ bool http_conn::add_content(const char *content)
 
 bool http_conn::add_content_type()
 {
-  return add_response("Content-Type:%s\r\n", "text/html");
+  // 获取文件扩展名
+  size_t dot_pos = m_real_file.find_last_of('.');
+  std::string content_type = "text/html";
+  bool add_disposition = false;
+  std::string filename = "";
+
+  // 提取文件名，用于Content-Disposition头
+  if (m_url.compare(0, 9, "/uploads/") == 0)
+  {
+    size_t last_slash = m_url.find_last_of('/');
+    if (last_slash != std::string::npos)
+    {
+      filename = m_url.substr(last_slash + 1);
+
+      // 对于txt文件，强制浏览器下载而不是内联显示
+      if (dot_pos != std::string::npos)
+      {
+        std::string extension = m_real_file.substr(dot_pos);
+        std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+        if (extension == ".txt")
+        {
+          add_disposition = true;
+        }
+      }
+    }
+  }
+
+  if (dot_pos != std::string::npos)
+  {
+    std::string extension = m_real_file.substr(dot_pos);
+
+    // 转换为小写
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+
+    // 根据扩展名设置不同的MIME类型
+    if (extension == ".html" || extension == ".htm")
+    {
+      content_type = "text/html; charset=UTF-8";
+    }
+    else if (extension == ".txt")
+    {
+      content_type = "text/plain; charset=UTF-8";
+    }
+    else if (extension == ".jpg" || extension == ".jpeg")
+    {
+      content_type = "image/jpeg";
+    }
+    else if (extension == ".png")
+    {
+      content_type = "image/png";
+    }
+    else if (extension == ".gif")
+    {
+      content_type = "image/gif";
+    }
+    else if (extension == ".css")
+    {
+      content_type = "text/css; charset=UTF-8";
+    }
+    else if (extension == ".js")
+    {
+      content_type = "application/javascript; charset=UTF-8";
+    }
+    else if (extension == ".pdf")
+    {
+      content_type = "application/pdf";
+    }
+    else if (extension == ".mp3")
+    {
+      content_type = "audio/mpeg";
+    }
+    else if (extension == ".mp4")
+    {
+      content_type = "video/mp4";
+    }
+    else
+    {
+      // 默认作为二进制流处理
+      content_type = "application/octet-stream";
+    }
+  }
+  else
+  {
+    // 没有扩展名，对于上传文件夹的文件，默认使用UTF-8编码的文本
+    if (m_url.compare(0, 9, "/uploads/") == 0)
+    {
+      content_type = "text/plain; charset=UTF-8";
+    }
+  }
+
+  add_response("Content-Type: %s\r\n", content_type.c_str());
+
+  // 添加Content-Disposition头，强制浏览器以附件形式处理而不是直接显示
+  if (add_disposition && !filename.empty())
+  {
+    add_response("Content-Disposition: attachment; filename=\"%s\"\r\n", filename.c_str());
+  }
+
+  return true;
 }
 
 // 根据服务器处理HTTP请求的结果，决定返回给客户端的内容
