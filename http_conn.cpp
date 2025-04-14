@@ -498,6 +498,19 @@ http_conn::HTTP_CODE http_conn::handle_file_upload(const std::string &request_bo
       return INTERNAL_ERROR;
     }
 
+    // 保存文件描述信息（如果有）
+    if (form_data.find("description") != form_data.end() && !form_data["description"].empty())
+    {
+      std::string desc_file_path = std::string(UPLOAD_DIR) + "/.desc_" + m_upload_file_name;
+      FILE *fp = fopen(desc_file_path.c_str(), "w");
+      if (fp)
+      {
+        fprintf(fp, "%s", form_data["description"].c_str());
+        fclose(fp);
+        printf("保存文件描述成功: %s\n", desc_file_path.c_str());
+      }
+    }
+
     printf("文件上传成功: %s\n", m_upload_file_name.c_str());
 
     // 设置响应页面为上传成功页面
@@ -513,34 +526,53 @@ std::map<std::string, std::string> http_conn::parse_multipart_form_data(const st
 {
   std::map<std::string, std::string> form_data;
 
-  // 构造分界线字符串
-  std::string boundary = "--" + m_boundary;
-
-  // 查找第一个分界线
-  size_t pos = request_body.find(boundary);
-  if (pos == std::string::npos)
+  // 如果boundary为空，则无法解析
+  if (m_boundary.empty())
   {
     return form_data;
   }
 
-  // 循环解析每个部分
-  while (pos != std::string::npos)
-  {
-    // 找到该部分的起始位置
-    size_t part_start = pos + boundary.length();
+  // 添加--前缀以匹配分界线
+  std::string boundary = "--" + m_boundary;
+  std::string end_boundary = "--" + m_boundary + "--";
 
-    // 查找下一个分界线
-    size_t next_boundary = request_body.find(boundary, part_start);
+  // 在表单数据中查找分界线
+  size_t pos = request_body.find(boundary);
+  while (pos != std::string::npos && request_body.compare(pos, end_boundary.length(), end_boundary) != 0)
+  {
+    // 寻找下一个分界线
+    size_t next_boundary = request_body.find(boundary, pos + boundary.length());
     if (next_boundary == std::string::npos)
     {
-      break;
+      // 如果找不到下一个分界线，尝试查找结束分界线
+      next_boundary = request_body.find(end_boundary, pos + boundary.length());
+      if (next_boundary == std::string::npos)
+      {
+        // 如果结束分界线也找不到，退出循环
+        break;
+      }
     }
 
-    // 提取该部分的内容
-    std::string part = request_body.substr(part_start, next_boundary - part_start);
+    // 提取当前部分（不包括分界线）
+    size_t part_start = pos + boundary.length();
+    // 跳过boundary后的\r\n
+    if (request_body.substr(part_start, 2) == "\r\n")
+    {
+      part_start += 2;
+    }
+    size_t part_end = next_boundary;
+    // 确保不会越界
+    if (part_start >= request_body.length() || part_start >= part_end)
+    {
+      pos = next_boundary;
+      continue;
+    }
 
-    // 提取头部和内容
+    std::string part = request_body.substr(part_start, part_end - part_start);
+
+    // 查找头部和内容的分隔符（空行，即\r\n\r\n）
     size_t headers_end = part.find("\r\n\r\n");
+
     if (headers_end != std::string::npos)
     {
       std::string headers = part.substr(0, headers_end);
@@ -666,8 +698,8 @@ std::string generate_file_list_html()
   struct dirent *entry;
   while ((entry = readdir(dir)) != NULL)
   {
-    // 跳过.和..目录
-    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+    // 跳过.和..目录以及隐藏文件
+    if (entry->d_name[0] == '.')
     {
       continue;
     }
@@ -697,6 +729,20 @@ std::string generate_file_list_html()
   file_list_html = "<ul class=\"files\">\n";
   for (const auto &file : files)
   {
+    // 获取文件描述信息
+    std::string desc_file_path = std::string(http_conn::UPLOAD_DIR) + "/.desc_" + file;
+    std::string description = "";
+    FILE *fp = fopen(desc_file_path.c_str(), "r");
+    if (fp)
+    {
+      char desc_buf[1024] = {0};
+      if (fgets(desc_buf, sizeof(desc_buf), fp))
+      {
+        description = desc_buf;
+      }
+      fclose(fp);
+    }
+
     // 文件大小信息
     std::string full_path = std::string(http_conn::UPLOAD_DIR) + "/" + file;
     struct stat file_stat;
@@ -717,11 +763,15 @@ std::string generate_file_list_html()
       size_str = std::to_string(file_stat.st_size / (1024 * 1024)) + " MB";
     }
 
-    // 添加文件链接、大小和删除按钮
+    // 添加文件链接、大小、描述和删除按钮
     file_list_html += "  <li>\n";
     file_list_html += "    <div>\n";
     file_list_html += "      <a href=\"/uploads/" + file + "\">" + file + "</a>\n";
     file_list_html += "      <span class=\"file-size\">" + size_str + "</span>\n";
+    if (!description.empty())
+    {
+      file_list_html += "      <div class=\"file-desc\">" + description + "</div>\n";
+    }
     file_list_html += "    </div>\n";
     file_list_html += "    <div class=\"file-actions\">\n";
     file_list_html += "      <form action=\"/delete\" method=\"POST\">\n";
