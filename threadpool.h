@@ -2,7 +2,6 @@
 #define THREADPOOL_H
 
 #include <pthread.h>
-#include <list>
 #include <queue>
 #include <exception>
 #include <cstdio>
@@ -33,7 +32,7 @@ private:
   // 请求队列最多允许的等待处理请求数
   int m_max_requests;
 
-  // 请求队列 - 改用std::queue替代std::list提高效率
+  // 请求队列 std::queue
   std::queue<T *> m_workqueue;
 
   // 互斥锁
@@ -98,7 +97,7 @@ bool threadpool<T>::append(T *request)
     return false;
   }
 
-  m_workqueue.push(request); // 使用queue的push方法而不是list的push_back
+  m_workqueue.push(request);
   m_queuelocker.unlock();
   m_queuestat.post();
   return true;

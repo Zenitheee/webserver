@@ -1,18 +1,15 @@
 #include "http_conn.h"
-#include <regex>
-#include <dirent.h>
-#include <algorithm>
-
+#include "util.h"
 // 定义HTTP响应的一些状态信息
 const char *ok_200_title = "OK";
 const char *error_400_title = "Bad Request";
-const char *error_400_form = "Your request has bad syntax or is inherently impossible to satisfy.\n";
+const char *error_400_form = "400:Your request has bad syntax or is inherently impossible to satisfy.\n";
 const char *error_403_title = "Forbidden";
-const char *error_403_form = "You do not have permission to get file from this server.\n";
+const char *error_403_form = "403:You do not have permission to get file from this server.\n";
 const char *error_404_title = "Not Found";
-const char *error_404_form = "The requested file was not found on this server.\n";
+const char *error_404_form = "404:The requested file was not found on this server.\n";
 const char *error_500_title = "Internal Error";
-const char *error_500_form = "There was an unusual problem serving the requested file.\n";
+const char *error_500_form = "500:There was an unusual problem serving the requested file.\n";
 
 // 所有的客户数
 int http_conn::m_epollfd = -1;
@@ -23,48 +20,7 @@ int http_conn::m_user_count = 0;
 const std::string doc_root = "/home/zen/webserver/resources";
 
 // 上传文件目录
-const char *http_conn::UPLOAD_DIR = "/home/zen/webserver/resources/uploads";
-
-// 设置文件描述符非阻塞
-void setnonblocking(int fd)
-{
-  int old_flag = fcntl(fd, F_GETFL);
-  int new_flag = old_flag | O_NONBLOCK;
-  fcntl(fd, F_SETFL, new_flag);
-}
-
-// 向epoll中添加需要监听的文件描述符
-void addfd(int epollfd, int fd, bool one_shot)
-{
-  epoll_event event;
-  event.data.fd = fd;
-  event.events = EPOLLIN | EPOLLRDHUP;
-
-  if (one_shot)
-  {
-    // 防止同一个通信被不同的线程处理
-    event.events |= EPOLLONESHOT;
-  }
-  epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);
-  // 设置文件描述符非阻塞
-  setnonblocking(fd);
-}
-
-// 从epoll中移除监听的文件描述符
-void removefd(int epollfd, int fd)
-{
-  epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, 0);
-  close(fd);
-}
-
-// 修改文件描述符,重置socket上EPOLLONESHOT事件，以确保下次可读时EPOLLIN事件能被触发
-void modfd(int epollfd, int fd, int ev)
-{
-  epoll_event event;
-  event.data.fd = fd;
-  event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
-  epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
-}
+const std::string http_conn::UPLOAD_DIR = "/home/zen/webserver/resources/uploads";
 
 // 初始化连接
 void http_conn::init(int sockfd, const sockaddr_in &addr)
@@ -139,7 +95,7 @@ bool http_conn::read()
   int bytes_read = 0;
   while (true)
   {
-    // 从m_read_buf + m_read_idx索引出开始保存数据，大小是READ_BUFFER_SIZE - m_read_idx
+    // 从m_read_buf + m_read_idx索引开始保存数据，大小是READ_BUFFER_SIZE - m_read_idx
     bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
     if (bytes_read == -1)
     {
@@ -187,7 +143,7 @@ bool http_conn::write()
         return true;
       }
       // 智能指针会自动释放资源
-      unmap();
+      m_file_address.reset();
       return false;
     }
     bytes_to_send -= temp;
@@ -208,7 +164,8 @@ bool http_conn::write()
     if (bytes_to_send <= 0)
     {
       // 没有数据要发送了
-      unmap();
+      m_file_address.reset();
+
       modfd(m_epollfd, m_sockfd, EPOLLIN);
 
       if (m_linger)
@@ -222,6 +179,26 @@ bool http_conn::write()
       }
     }
   }
+}
+
+// 由线程池中的工作线程调用，这是处理http请求的入口函数
+void http_conn::process()
+{
+  // 解析HTTP请求
+  HTTP_CODE read_ret = process_read();
+  if (read_ret == NO_REQUEST)
+  {
+    modfd(m_epollfd, m_sockfd, EPOLLIN);
+    return;
+  }
+
+  // 生成响应
+  bool write_ret = process_write(read_ret);
+  if (!write_ret)
+  {
+    close_conn();
+  }
+  modfd(m_epollfd, m_sockfd, EPOLLOUT);
 }
 
 // 主状态机，解析请求 - 使用正则表达式
@@ -474,10 +451,10 @@ http_conn::HTTP_CODE http_conn::handle_file_upload(const std::string &request_bo
 {
   // 检查文件上传目录是否存在
   struct stat dir_stat;
-  if (stat(UPLOAD_DIR, &dir_stat) < 0 || !S_ISDIR(dir_stat.st_mode))
+  if (stat(UPLOAD_DIR.c_str(), &dir_stat) < 0 || !S_ISDIR(dir_stat.st_mode))
   {
     // 目录不存在，尝试创建
-    if (mkdir(UPLOAD_DIR, 0755) < 0)
+    if (mkdir(UPLOAD_DIR.c_str(), 0755) < 0)
     {
       printf("创建上传目录失败: %s\n", strerror(errno));
       return INTERNAL_ERROR;
@@ -501,7 +478,7 @@ http_conn::HTTP_CODE http_conn::handle_file_upload(const std::string &request_bo
     // 保存文件描述信息（如果有）
     if (form_data.find("description") != form_data.end() && !form_data["description"].empty())
     {
-      std::string desc_file_path = std::string(UPLOAD_DIR) + "/.desc_" + m_upload_file_name;
+      std::string desc_file_path = UPLOAD_DIR + "/.desc_" + m_upload_file_name;
       FILE *fp = fopen(desc_file_path.c_str(), "w");
       if (fp)
       {
@@ -585,8 +562,17 @@ std::map<std::string, std::string> http_conn::parse_multipart_form_data(const st
         if (headers.find("filename=") != std::string::npos)
         {
           // 提取文件名
-          m_upload_file_name = extract_filename_from_content_disposition(headers);
-
+          std::regex filename_regex("filename=\"([^\"]+)\"");
+          std::smatch matches;
+          if (std::regex_search(headers, matches, filename_regex))
+          {
+            m_upload_file_name = matches[1];
+          }
+          // 如果没找到文件名，返回一个默认名称
+          else
+          {
+            m_upload_file_name = "unknown_file";
+          }
           // 如果文件内容是二进制，移除结尾的\r\n
           if (!content.empty() && content.substr(content.length() - 2) == "\r\n")
           {
@@ -599,6 +585,7 @@ std::map<std::string, std::string> http_conn::parse_multipart_form_data(const st
         else
         {
           // 普通表单字段，提取字段名和值
+          // 从Content-Disposition头中提取文件名
           std::regex field_regex("name=\"([^\"]+)\"");
           std::smatch matches;
           if (std::regex_search(headers, matches, field_regex))
@@ -624,26 +611,11 @@ std::map<std::string, std::string> http_conn::parse_multipart_form_data(const st
   return form_data;
 }
 
-// 从Content-Disposition头中提取文件名
-std::string http_conn::extract_filename_from_content_disposition(const std::string &header)
-{
-  std::regex filename_regex("filename=\"([^\"]+)\"");
-  std::smatch matches;
-
-  if (std::regex_search(header, matches, filename_regex))
-  {
-    return matches[1];
-  }
-
-  // 如果没找到文件名，返回一个默认名称
-  return "unknown_file";
-}
-
 // 保存上传的文件
 bool http_conn::save_uploaded_file(const std::string &file_content, const std::string &file_name)
 {
   // 构造完整的文件路径
-  std::string file_path = std::string(UPLOAD_DIR) + "/" + file_name;
+  std::string file_path = UPLOAD_DIR + "/" + file_name;
 
   // 打开文件准备写入
   FILE *fp = fopen(file_path.c_str(), "wb");
@@ -667,128 +639,7 @@ bool http_conn::save_uploaded_file(const std::string &file_content, const std::s
   return true;
 }
 
-// 由于我们现在使用正则表达式直接处理完整的HTTP请求，不再需要按行解析
-// 但为了保持兼容性，我们保留这个函数，它总是返回一个完整的行
-http_conn::LINE_STATUS http_conn::parse_line()
-{
-  return LINE_OK;
-}
-
-// 对内存映射区执行munmap操作
-void http_conn::unmap()
-{
-  // 使用智能指针自动管理，只需要重置指针
-  m_file_address.reset();
-}
-
-// 生成文件列表HTML
-std::string generate_file_list_html()
-{
-  std::string file_list_html = "";
-
-  // 打开uploads目录
-  DIR *dir = opendir(http_conn::UPLOAD_DIR);
-  if (dir == NULL)
-  {
-    return "<p>无法访问上传目录。</p>";
-  }
-
-  // 存储文件列表
-  std::vector<std::string> files;
-  struct dirent *entry;
-  while ((entry = readdir(dir)) != NULL)
-  {
-    // 跳过.和..目录以及隐藏文件
-    if (entry->d_name[0] == '.')
-    {
-      continue;
-    }
-
-    // 构建完整路径
-    std::string full_path = std::string(http_conn::UPLOAD_DIR) + "/" + entry->d_name;
-
-    // 检查是否是普通文件
-    struct stat file_stat;
-    if (stat(full_path.c_str(), &file_stat) == 0 && S_ISREG(file_stat.st_mode))
-    {
-      files.push_back(entry->d_name);
-    }
-  }
-  closedir(dir);
-
-  // 如果没有文件，显示相应信息
-  if (files.empty())
-  {
-    return "<p>目前没有文件，请到表单页面上传文件。</p>";
-  }
-
-  // 按字母顺序排序文件
-  std::sort(files.begin(), files.end());
-
-  // 构建文件列表HTML
-  file_list_html = "<ul class=\"files\">\n";
-  for (const auto &file : files)
-  {
-    // 获取文件描述信息
-    std::string desc_file_path = std::string(http_conn::UPLOAD_DIR) + "/.desc_" + file;
-    std::string description = "";
-    FILE *fp = fopen(desc_file_path.c_str(), "r");
-    if (fp)
-    {
-      char desc_buf[1024] = {0};
-      if (fgets(desc_buf, sizeof(desc_buf), fp))
-      {
-        description = desc_buf;
-      }
-      fclose(fp);
-    }
-
-    // 文件大小信息
-    std::string full_path = std::string(http_conn::UPLOAD_DIR) + "/" + file;
-    struct stat file_stat;
-    stat(full_path.c_str(), &file_stat);
-
-    // 计算可读的文件大小
-    std::string size_str;
-    if (file_stat.st_size < 1024)
-    {
-      size_str = std::to_string(file_stat.st_size) + " B";
-    }
-    else if (file_stat.st_size < 1024 * 1024)
-    {
-      size_str = std::to_string(file_stat.st_size / 1024) + " KB";
-    }
-    else
-    {
-      size_str = std::to_string(file_stat.st_size / (1024 * 1024)) + " MB";
-    }
-
-    // 添加文件链接、大小、描述和删除按钮
-    file_list_html += "  <li>\n";
-    file_list_html += "    <div>\n";
-    file_list_html += "      <a href=\"/uploads/" + file + "\">" + file + "</a>\n";
-    file_list_html += "      <span class=\"file-size\">" + size_str + "</span>\n";
-    if (!description.empty())
-    {
-      file_list_html += "      <div class=\"file-desc\">" + description + "</div>\n";
-    }
-    file_list_html += "    </div>\n";
-    file_list_html += "    <div class=\"file-actions\">\n";
-    file_list_html += "      <form action=\"/delete\" method=\"POST\">\n";
-    file_list_html += "        <input type=\"hidden\" name=\"filename\" value=\"" + file + "\">\n";
-    file_list_html += "        <button type=\"submit\" class=\"delete-btn\">删除</button>\n";
-    file_list_html += "      </form>\n";
-    file_list_html += "    </div>\n";
-    file_list_html += "  </li>\n";
-  }
-  file_list_html += "</ul>\n";
-
-  return file_list_html;
-}
-
-// 当得到一个完整、正确的HTTP请求时，我们就分析目标文件的属性，
-// 如果目标文件存在、对所有用户可读，且不是目录，则使用mmap将其
-// 映射到内存地址m_file_address处，并告诉调用者获取文件成功
+// 当得到一个完整、正确的HTTP请求时，我们就分析目标文件的属性
 http_conn::HTTP_CODE http_conn::do_request()
 {
   // 构造请求文件路径
@@ -804,7 +655,7 @@ http_conn::HTTP_CODE http_conn::do_request()
   if (m_url.compare(0, 9, "/uploads/") == 0)
   {
     std::string filename = m_url.substr(8); // 去掉/uploads前缀，保留/
-    m_real_file = std::string(UPLOAD_DIR) + filename;
+    m_real_file = UPLOAD_DIR + filename;
   }
 
   // 对于POST请求，可以根据URL路径和请求体内容做特殊处理
@@ -861,7 +712,7 @@ http_conn::HTTP_CODE http_conn::do_request()
       // 如果有文件名，尝试删除文件
       if (!filename.empty())
       {
-        std::string file_path = std::string(UPLOAD_DIR) + "/" + filename;
+        std::string file_path = UPLOAD_DIR + "/" + filename;
 
         // 检查文件是否存在并且是常规文件
         struct stat file_stat;
@@ -1007,25 +858,112 @@ http_conn::HTTP_CODE http_conn::do_request()
   return FILE_REQUEST;
 }
 
-// 往写缓冲中写入待发送的数据
-bool http_conn::add_response(const char *format, ...)
+// 生成文件列表HTML
+std::string http_conn::generate_file_list_html()
 {
-  if (m_write_idx >= WRITE_BUFFER_SIZE)
+  std::string file_list_html = "";
+
+  // 打开uploads目录
+  DIR *dir = opendir(UPLOAD_DIR.c_str());
+  if (dir == NULL)
   {
-    return false;
+    return "<p>无法访问上传目录。</p>";
   }
-  va_list arg_list;
-  va_start(arg_list, format);
-  int len = vsnprintf(m_write_buf + m_write_idx, WRITE_BUFFER_SIZE - 1 - m_write_idx, format, arg_list);
-  if (len >= (WRITE_BUFFER_SIZE - 1 - m_write_idx))
+
+  // 存储文件列表
+  std::vector<std::string> files;
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL)
   {
-    return false;
+    // 跳过.和..目录以及隐藏文件
+    if (entry->d_name[0] == '.')
+    {
+      continue;
+    }
+
+    // 构建完整路径
+    std::string full_path = UPLOAD_DIR + "/" + entry->d_name;
+
+    // 检查是否是普通文件
+    struct stat file_stat;
+    if (stat(full_path.c_str(), &file_stat) == 0 && S_ISREG(file_stat.st_mode))
+    {
+      files.push_back(entry->d_name);
+    }
   }
-  m_write_idx += len;
-  va_end(arg_list);
-  return true;
+  closedir(dir);
+
+  // 如果没有文件，显示相应信息
+  if (files.empty())
+  {
+    return "<p>目前没有文件，请到表单页面上传文件。</p>";
+  }
+
+  // 按字母顺序排序文件
+  std::sort(files.begin(), files.end());
+
+  // 构建文件列表HTML
+  file_list_html = "<ul class=\"files\">\n";
+  for (const auto &file : files)
+  {
+    // 获取文件描述信息
+    std::string desc_file_path = UPLOAD_DIR + "/.desc_" + file;
+    std::string description = "";
+    FILE *fp = fopen(desc_file_path.c_str(), "r");
+    if (fp)
+    {
+      char desc_buf[1024] = {0};
+      if (fgets(desc_buf, sizeof(desc_buf), fp))
+      {
+        description = desc_buf;
+      }
+      fclose(fp);
+    }
+
+    // 文件大小信息
+    std::string full_path = UPLOAD_DIR + "/" + file;
+    struct stat file_stat;
+    stat(full_path.c_str(), &file_stat);
+
+    // 计算可读的文件大小
+    std::string size_str;
+    if (file_stat.st_size < 1024)
+    {
+      size_str = std::to_string(file_stat.st_size) + " B";
+    }
+    else if (file_stat.st_size < 1024 * 1024)
+    {
+      size_str = std::to_string(file_stat.st_size / 1024) + " KB";
+    }
+    else
+    {
+      size_str = std::to_string(file_stat.st_size / (1024 * 1024)) + " MB";
+    }
+
+    // 添加文件链接、大小、描述和删除按钮
+    file_list_html += "  <li>\n";
+    file_list_html += "    <div>\n";
+    file_list_html += "      <a href=\"/uploads/" + file + "\">" + file + "</a>\n";
+    file_list_html += "      <span class=\"file-size\">" + size_str + "</span>\n";
+    if (!description.empty())
+    {
+      file_list_html += "      <div class=\"file-desc\">" + description + "</div>\n";
+    }
+    file_list_html += "    </div>\n";
+    file_list_html += "    <div class=\"file-actions\">\n";
+    file_list_html += "      <form action=\"/delete\" method=\"POST\">\n";
+    file_list_html += "        <input type=\"hidden\" name=\"filename\" value=\"" + file + "\">\n";
+    file_list_html += "        <button type=\"submit\" class=\"delete-btn\">删除</button>\n";
+    file_list_html += "      </form>\n";
+    file_list_html += "    </div>\n";
+    file_list_html += "  </li>\n";
+  }
+  file_list_html += "</ul>\n";
+
+  return file_list_html;
 }
 
+// 往写缓冲中写入待发送的数据
 bool http_conn::add_status_line(int status, const char *title)
 {
   return add_response("%s %d %s\r\n", "HTTP/1.1", status, title);
@@ -1042,21 +980,6 @@ void http_conn::add_headers(int content_len)
 bool http_conn::add_content_length(int content_len)
 {
   return add_response("Content-Length: %d\r\n", content_len);
-}
-
-bool http_conn::add_linger()
-{
-  return add_response("Connection: %s\r\n", (m_linger == true) ? "keep-alive" : "close");
-}
-
-bool http_conn::add_blank_line()
-{
-  return add_response("%s", "\r\n");
-}
-
-bool http_conn::add_content(const char *content)
-{
-  return add_response("%s", content);
 }
 
 bool http_conn::add_content_type()
@@ -1162,6 +1085,39 @@ bool http_conn::add_content_type()
   return true;
 }
 
+bool http_conn::add_linger()
+{
+  return add_response("Connection: %s\r\n", (m_linger == true) ? "keep-alive" : "close");
+}
+
+bool http_conn::add_blank_line()
+{
+  return add_response("%s", "\r\n");
+}
+
+bool http_conn::add_content(const char *content)
+{
+  return add_response("%s", content);
+}
+
+bool http_conn::add_response(const char *format, ...)
+{
+  if (m_write_idx >= WRITE_BUFFER_SIZE)
+  {
+    return false;
+  }
+  va_list arg_list;
+  va_start(arg_list, format);
+  int len = vsnprintf(m_write_buf + m_write_idx, WRITE_BUFFER_SIZE - 1 - m_write_idx, format, arg_list);
+  if (len >= (WRITE_BUFFER_SIZE - 1 - m_write_idx))
+  {
+    return false;
+  }
+  m_write_idx += len;
+  va_end(arg_list);
+  return true;
+}
+
 // 根据服务器处理HTTP请求的结果，决定返回给客户端的内容
 bool http_conn::process_write(HTTP_CODE ret)
 {
@@ -1219,24 +1175,4 @@ bool http_conn::process_write(HTTP_CODE ret)
   bytes_to_send = m_write_idx;
 
   return true;
-}
-
-// 由线程池中的工作线程调用，这是处理http请求的入口函数
-void http_conn::process()
-{
-  // 解析HTTP请求
-  HTTP_CODE read_ret = process_read();
-  if (read_ret == NO_REQUEST)
-  {
-    modfd(m_epollfd, m_sockfd, EPOLLIN);
-    return;
-  }
-
-  // 生成响应
-  bool write_ret = process_write(read_ret);
-  if (!write_ret)
-  {
-    close_conn();
-  }
-  modfd(m_epollfd, m_sockfd, EPOLLOUT);
 }

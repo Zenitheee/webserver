@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <signal.h>
 #include <sys/types.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -20,7 +19,8 @@
 #include <string>
 #include <memory>
 #include <map>
-#include <vector>
+#include <regex>
+#include <dirent.h>
 #include "locker.h"
 
 class http_conn
@@ -33,17 +33,17 @@ public:
   static const int WRITE_BUFFER_SIZE = 1024; // 写缓冲区的大小
 
   // 上传文件相关常量
-  static const char *UPLOAD_DIR;                     // 上传文件的目录路径
+  static const std::string UPLOAD_DIR;               // 上传文件的目录路径
   static const int MAX_FILE_SIZE = 10 * 1024 * 1024; // 最大文件大小限制(10MB)
 
   static int m_epollfd;    // 所有socket上的事件都被注册到同一个epoll内核事件中，所以设置成静态的
   static int m_user_count; // 统计用户的数量
 
-  // HTTP请求方法，这里只支持GET
+  // HTTP请求方法
   enum METHOD
   {
     GET = 0,
-    POST,
+    POST = 2,
     HEAD,
     PUT,
     DELETE,
@@ -86,15 +86,6 @@ public:
     FILE_REQUEST,
     INTERNAL_ERROR,
     CLOSED_CONNECTION
-  };
-
-  // 从状态机的三种可能状态，即行的读取状态，分别表示
-  // 1.读取到一个完整的行 2.行出错 3.行数据尚且不完整
-  enum LINE_STATUS
-  {
-    LINE_OK = 0,
-    LINE_BAD,
-    LINE_OPEN
   };
 
   http_conn() {}
@@ -152,26 +143,24 @@ private:
   HTTP_CODE parse_request_line(const std::string &request); // 解析请求首行
   HTTP_CODE parse_headers(const std::string &request);      // 解析请求头
   HTTP_CODE parse_content(const std::string &request);      // 解析请求体
-  LINE_STATUS parse_line();
   char *get_line() { return m_read_buf + m_start_line; }
   HTTP_CODE do_request();
 
   // 文件上传相关函数
   HTTP_CODE handle_file_upload(const std::string &request_body);
-  bool save_uploaded_file(const std::string &file_content, const std::string &file_name);
-  std::string extract_filename_from_content_disposition(const std::string &header);
   std::map<std::string, std::string> parse_multipart_form_data(const std::string &request_body);
+  bool save_uploaded_file(const std::string &file_content, const std::string &file_name);
+  std::string generate_file_list_html();
 
   // 这一组函数被process_write调用以填充HTTP应答。
-  void unmap();
-  void add_headers(int content_length);
-  bool add_response(const char *format, ...);
-  bool add_content(const char *content);
-  bool add_content_type();
   bool add_status_line(int status, const char *title);
+  void add_headers(int content_length);
   bool add_content_length(int content_length);
+  bool add_content_type();
   bool add_linger();
   bool add_blank_line();
+  bool add_content(const char *content);
+  bool add_response(const char *format, ...);
 };
 
 #endif

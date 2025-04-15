@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -11,26 +10,10 @@
 #include "locker.h"
 #include "threadpool.h"
 #include "http_conn.h"
+#include "util.h"
 
 #define MAX_FD 65535        // 最大的文件描述符个数
 #define MAX_EVENT_NUM 10000 // 监听的最大的事件数量
-
-// 添加信号捕捉
-void addsig(int sig, void(handler)(int))
-{
-  struct sigaction sa;
-  memset(&sa, '\0', sizeof(sa));
-  sa.sa_handler = handler;
-  sigfillset(&sa.sa_mask);
-  sigaction(sig, &sa, NULL);
-}
-
-// 添加文件描述符到epoll中
-extern void addfd(int epollfd, int fd, bool one_shot);
-// 从epoll中删除文件描述符
-extern void removefd(int epollfd, int fd);
-// 修改文件描述符
-extern void modfd(int epollfd, int fd, int ev);
 
 int main(int argc, char *argv[])
 {
@@ -75,11 +58,11 @@ int main(int argc, char *argv[])
   bind(listenfd, (struct sockaddr *)&address, sizeof(address));
 
   // 监听
-  listen(listenfd, 5);
+  listen(listenfd, 16);
 
   // 创建epoll对象，事件数组，添加
   epoll_event events[MAX_EVENT_NUM];
-  int epollfd = epoll_create(5);
+  int epollfd = epoll_create(1);
 
   // 将监听的文件描述符到epoll对象中
   addfd(epollfd, listenfd, false);
@@ -90,7 +73,7 @@ int main(int argc, char *argv[])
     int num = epoll_wait(epollfd, events, MAX_EVENT_NUM, -1);
     if ((num < 0) && (errno != EINTR))
     {
-      printf("epoll failure\n");
+      printf("epoll failure: %s (errno=%d)\n", strerror(errno), errno);
       break;
     }
 
